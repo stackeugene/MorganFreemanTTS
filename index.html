@@ -4,12 +4,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Document</title>
+    <style>
+        body {
+            background: linear-gradient(to right, #221b29, #4c1384);
+            height: 100vh;
+            margin: 0;
+        }
+    </style>
 </head>
 <body style="display: flex; justify-content: center; align-items: center; height: 100vh; flex-direction: column;">
-    <img src="Freeman.png" alt="I can smell you" style="width: 200px;">
-    <h1> Morgan Freeman Text-To-Speech</h1>
-    <p>Type anthing you want into the box bellow and <em>watch the magic happen!</em></p>
-    <textarea id="speech" style="width: 500px; height: 200px;"></textarea>
+    <div>
+        <img src="dancing-banana.gif" alt="dance" style="width: 100px;">
+        <img src="Freeman.png" alt="I can smell you" style="width: 200px;">
+        <img src="dancing-banana.gif" alt="dance" style="width: 100px;">
+    </div>
+    <h1 style="color: white;"> Morgan Freeman Text-To-Speech</h1>
+    <p style="color: white;">Type anthing you want into the box below and <em>watch the magic happen!</em></p>
+    <textarea id="speech" style="width: 500px; height: 100px;"></textarea>
     <p></p>
     <button style="width: 130px; height: 40px;">Generate Speech</button>
 </body>
