@@ -1,3 +1,1 @@
 import math
-
-print("hello")
