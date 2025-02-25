@@ -10,7 +10,7 @@ Jake Land,
 Brynn Williams
 
 Scrum Master/Tester:
-Tabarek Lbrahim
+Tabarek Ibrahim
 
 ISO:
 DeJuan Leffall
