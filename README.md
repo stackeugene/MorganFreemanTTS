@@ -17,11 +17,11 @@ DeJuan Leffall
 
 
 REQUIRED DEPENDECIES:
-librosa
-torch
-torchaudio
-transformers
-datasets
-numpy
-soundfile
-sentencepiece
+-librosa
+-torch
+-torchaudio
+-transformers
+-datasets
+-numpy
+-soundfile
+-sentencepiece
