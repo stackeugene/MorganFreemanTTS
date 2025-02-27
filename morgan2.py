@@ -153,7 +153,7 @@ def generate_speech(text, output_path="output.wav"):
 
     # Process the input text
     inputs = processor(text=text, return_tensors="pt", padding=True, truncation=True)
-    inputs["input_ids"] = inputs["input_ids"].float()  # Ensure input_ids is float
+    inputs["input_ids"] = inputs["input_ids"].long()  # Ensure input_ids is Long
     inputs["attention_mask"] = inputs["attention_mask"].float()  # Ensure attention_mask is float
 
     # Generate speech
