@@ -14,3 +14,14 @@ Tabarek Ibrahim
 
 ISO:
 DeJuan Leffall
+
+
+REQUIRED DEPENDECIES:
+librosa
+torch
+torchaudio
+transformers
+datasets
+numpy
+soundfile
+sentencepiece
