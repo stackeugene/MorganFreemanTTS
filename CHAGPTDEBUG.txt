@@ -1,0 +1,55 @@
+Yes, I see a few potential issues in the script:
+
+1. Padding Issue in prepare_dataset
+The script pads or truncates the mel spectrograms to a length of 400 time steps, but it uses:
+
+mel_spectrogram = torch.nn.functional.pad(mel_spectrogram, (0, 0, 0, pad_amount))
+
+The padding format should be (left, right, top, bottom), so (0, 0, pad_amount, 0) might be correct instead.
+
+
+
+2. Shape Mismatch in fine_tune_model
+Before passing mel_spectrograms to the model, it is permuted:
+
+mel_spectrograms = mel_spectrograms.permute(0, 2, 1)
+
+This changes its shape to [batch_size, num_mel_bins, sequence_length], which may not match what SpeechT5 expects.
+If there's a runtime error related to dimension mismatch, try keeping it in [batch_size, sequence_length, num_mel_bins].
+
+
+
+3. Error Handling in fine_tune_model
+If any error occurs inside the training loop, the script continues without proper debugging:
+
+except Exception as e:
+    print(f"Error processing batch {i+1}: {e}")
+    continue
+
+This could mask critical issues. Consider logging a stack trace:
+
+import traceback
+except Exception as e:
+    print(f"Error processing batch {i+1}: {e}")
+    traceback.print_exc()
+    continue
+
+
+
+4. Incorrect Call to generate_speech
+SpeechT5 does not have a generate_speech method. Instead, you likely need:
+
+with torch.no_grad():
+    outputs = model.generate(**inputs)
+
+Using generate_speech directly may result in an AttributeError.
+
+
+
+5. File Path Hardcoding
+The dataset path is hardcoded:
+
+train_json_path = r"C:\Users\brynn\OneDrive\Desktop\coleg\MorganFreeman\MorganFreemanTTS\SoundFiles\metadata_train.json"
+
+
+This will break if another user runs the script. Use os.path.join and make it configurable.
