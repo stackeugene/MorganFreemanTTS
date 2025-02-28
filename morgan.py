@@ -76,7 +76,7 @@ def generate_speech(text, output_path="output.wav"):
 if __name__ == "__main__":
     dataset_path = "morgan_freeman_tts_dataset"
     
-    # Load dataset (TO ALL OF GROUP 2 - NEED TO REPLACE THIS WITH YOUR OWN FILE PATH TO THIS FILE)
+    # Load dataset 
     train_json_path = r"SoundFiles\metadata_train.json"
     dataset = load_dataset(train_json_path)
 
