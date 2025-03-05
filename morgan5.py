@@ -5,8 +5,7 @@ import torch
 import torchaudio
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from transformers import SpeechT5Processor, SpeechT5ForTextToSpeech
-from datasets import load_dataset
+from transformers import SpeechT5Processor, SpeechT5ForTextToSpeech, get_linear_schedule_with_warmup
 
 # Load dataset from JSON file
 def load_json_dataset(json_path):
@@ -39,6 +38,7 @@ def waveform_to_mel(waveform, sample_rate, n_mels=80):
 def prepare_dataset(dataset, target_length=16000 * 5):  # 5 seconds of audio at 16kHz
     processed_data = []
     target_sample_rate = 16000  # Required by SpeechT5
+    processor = SpeechT5Processor.from_pretrained("microsoft/speecht5_tts")
 
     for sample in dataset:
         print(sample)
@@ -46,36 +46,47 @@ def prepare_dataset(dataset, target_length=16000 * 5):  # 5 seconds of audio at 
         print(f"Loading audio file: {audio_path}")  # Print the file path
         text = sample["text"]
 
-        # Load audio waveform
-        waveform, sample_rate = torchaudio.load(audio_path)
+        try:
+            # Load audio waveform
+            waveform, sample_rate = torchaudio.load(audio_path)
 
-        # Resample if needed
-        if sample_rate != target_sample_rate:
-            resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=target_sample_rate)
-            waveform = resampler(waveform)
+            # Resample if needed
+            if sample_rate != target_sample_rate:
+                resampler = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=target_sample_rate)
+                waveform = resampler(waveform)
 
-        # Apply padding/truncation
-        waveform = pad_or_truncate(waveform, target_length)
+            # Apply padding/truncation
+            waveform = pad_or_truncate(waveform, target_length)
 
-        # Convert to mel spectrogram
-        mel_spectrogram = waveform_to_mel(waveform, target_sample_rate).squeeze(0)  # Remove batch dimension if present
+            # Convert to mel spectrogram
+            mel_spectrogram = waveform_to_mel(waveform, target_sample_rate).squeeze(0)  # Remove batch dimension if present
 
-        # Ensure the mel spectrogram has the correct shape [sequence_length, num_mel_bins]
-        if mel_spectrogram.shape[1] > 80:
-            mel_spectrogram = mel_spectrogram[:, :80]  # Truncate to 80 time steps
-        elif mel_spectrogram.shape[1] < 80:
-            pad_amount = 80 - mel_spectrogram.shape[1]
-            mel_spectrogram = torch.nn.functional.pad(mel_spectrogram, (0, 0, 0, pad_amount))  # Pad time dimension
+            # Ensure the mel spectrogram has the correct shape [sequence_length, num_mel_bins]
+            if mel_spectrogram.shape[1] > 80:
+                mel_spectrogram = mel_spectrogram[:, :80]  # Truncate to 80 time steps
+            elif mel_spectrogram.shape[1] < 80:
+                pad_amount = 80 - mel_spectrogram.shape[1]
+                mel_spectrogram = torch.nn.functional.pad(mel_spectrogram, (0, 0, 0, pad_amount))  # Pad time dimension
 
-        processed_data.append({
-            "mel_spectrogram": mel_spectrogram,
-            "text": text
-        })
+            # Tokenize the text
+            inputs = processor(text=text, return_tensors="pt")
+            input_ids = inputs["input_ids"].squeeze(0)  # Remove batch dimension
+            attention_mask = inputs["attention_mask"].squeeze(0)  # Remove batch dimension
+
+            processed_data.append({
+                "mel_spectrogram": mel_spectrogram,
+                "text": text,
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+            })
+        except Exception as e:
+            print(f"Error processing {audio_path}: {e}")
+            continue
 
     return processed_data
 
 # Fine-tuning function for SpeechT5
-def fine_tune_model(dataset, num_epochs=1, batch_size=2, learning_rate=1e-5):
+def fine_tune_model(dataset, num_epochs=5, batch_size=4, learning_rate=1e-5):
     processor = SpeechT5Processor.from_pretrained("microsoft/speecht5_tts")
     model = SpeechT5ForTextToSpeech.from_pretrained("microsoft/speecht5_tts")
 
@@ -83,44 +94,37 @@ def fine_tune_model(dataset, num_epochs=1, batch_size=2, learning_rate=1e-5):
 
     # Convert dataset into tensors and use DataLoader
     def collate_fn(batch):
-        texts = [item["text"] for item in batch]
+        input_ids = [item["input_ids"] for item in batch]
+        attention_mask = [item["attention_mask"] for item in batch]
         mel_spectrograms = [item["mel_spectrogram"] for item in batch]
 
-        # Ensure all mel spectrograms have the same shape [sequence_length, num_mel_bins]
-        mel_spectrograms = [F.pad(mel, (0, 0, 0, 80 - mel.shape[0])) if mel.shape[0] < 80 else mel[:80, :] for mel in mel_spectrograms]
-        mel_spectrograms = torch.stack(mel_spectrograms)  # Stack into a batch
+        # Pad input IDs, attention masks, and mel spectrograms
+        input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True)
+        attention_mask = torch.nn.utils.rnn.pad_sequence(attention_mask, batch_first=True)
+        mel_spectrograms = torch.nn.utils.rnn.pad_sequence(mel_spectrograms, batch_first=True)
 
-        return {"mel_spectrograms": mel_spectrograms, "texts": texts}
+        return {"input_ids": input_ids, "attention_mask": attention_mask, "mel_spectrograms": mel_spectrograms}
 
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
 
-    model.train()
+    # Learning rate scheduler
+    total_steps = len(dataloader) * num_epochs
+    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
 
     for epoch in range(num_epochs):
         print(f"Epoch {epoch+1}/{num_epochs}")
+        model.train()  # Set the model to training mode
 
         for i, sample in enumerate(dataloader):
-            mel_spectrograms = sample["mel_spectrograms"]  # Already extracted from dataset
-            texts = sample["texts"]
+            input_ids = sample["input_ids"]
+            attention_mask = sample["attention_mask"]
+            mel_spectrograms = sample["mel_spectrograms"]
 
             try:
-                # Process text inputs
-                text_inputs = processor(text=texts, return_tensors="pt", padding=True, truncation=True)
-                text_inputs["attention_mask"] = text_inputs["attention_mask"].clone().detach().float()
-
-                # Debugging: Print shapes before passing to the model
-                print(f"Text input IDs shape: {text_inputs['input_ids'].shape}")
-                print(f"Attention mask shape: {text_inputs['attention_mask'].shape}")
-                print(f"Mel spectrograms shape: {mel_spectrograms.shape}")
-
-                # Ensure spectrograms are correctly shaped for the model
-                mel_spectrograms = mel_spectrograms.permute(0, 2, 1)  # Shape [batch_size, num_mel_bins, sequence_length]
-                print(f"Adjusted Mel spectrograms shape: {mel_spectrograms.shape}")
-
                 # Forward pass
                 outputs = model(
-                    input_ids=text_inputs["input_ids"],
-                    attention_mask=text_inputs["attention_mask"],
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
                     labels=mel_spectrograms
                 )
 
@@ -131,8 +135,11 @@ def fine_tune_model(dataset, num_epochs=1, batch_size=2, learning_rate=1e-5):
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+                scheduler.step()  # Update learning rate
 
-                print(f"Batch {i+1}/{len(dataloader)} - Loss: {loss.item()}")
+                # Print loss and learning rate
+                current_lr = scheduler.get_last_lr()[0]
+                print(f"Batch {i+1}/{len(dataloader)} - Loss: {loss.item()}, Learning Rate: {current_lr}")
 
             except Exception as e:
                 print(f"Error processing batch {i+1}: {e}")
@@ -145,10 +152,9 @@ def fine_tune_model(dataset, num_epochs=1, batch_size=2, learning_rate=1e-5):
     processor.save_pretrained("fine_tuned_speecht5")
     print("Fine-tuning complete. Model saved.")
 
-
-def generate_speech(model, input_ids, attention_mask, speaker_embeddings, output_path):
+def generate_speech(model, input_ids, attention_mask, output_path):
     with torch.no_grad():
-        speech = model.generate_speech(input_ids, speaker_embeddings, attention_mask=attention_mask)
+        speech = model.generate_speech(input_ids, attention_mask=attention_mask)
 
     # Reshape the speech tensor to [1, num_samples]
     speech = torch.reshape(speech, (1, -1)) # Reshape to [1, num_samples]
@@ -200,3 +206,4 @@ if __name__ == "__main__":
         os.system("start morgan_freeman_speech.wav")
     else:
         print("Unsupported operating system.")
+
