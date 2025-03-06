@@ -194,7 +194,7 @@ if __name__ == "__main__":
     # Generate sample speech, play it afterwards
     inputs = processor(text="Hello, I am Morgan Freeman.", return_tensors="pt")
     input_ids = inputs["input_ids"]  # Do not convert to float tensor
-    attention_mask = inputs["attention_mask"].float()  # Convert to float tensor
+    attention_mask = inputs["attention_mask"] #needs to be int
     generate_speech(model, input_ids, attention_mask, speaker_embeddings, "morgan_freeman_speech.wav")
     
     # Play the generated speech, with OS compatibility
