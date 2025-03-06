@@ -6,6 +6,7 @@ import torchaudio
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from transformers import SpeechT5Processor, SpeechT5ForTextToSpeech, get_linear_schedule_with_warmup
+from datasets import load_dataset
 
 # Load dataset from JSON file
 def load_json_dataset(json_path):
@@ -86,7 +87,7 @@ def prepare_dataset(dataset, target_length=16000 * 5):  # 5 seconds of audio at 
     return processed_data
 
 # Fine-tuning function for SpeechT5
-def fine_tune_model(dataset, num_epochs=5, batch_size=4, learning_rate=1e-5):
+def fine_tune_model(dataset, num_epochs=1, batch_size=6, learning_rate=1e-5):
     processor = SpeechT5Processor.from_pretrained("microsoft/speecht5_tts")
     model = SpeechT5ForTextToSpeech.from_pretrained("microsoft/speecht5_tts")
 
@@ -152,9 +153,9 @@ def fine_tune_model(dataset, num_epochs=5, batch_size=4, learning_rate=1e-5):
     processor.save_pretrained("fine_tuned_speecht5")
     print("Fine-tuning complete. Model saved.")
 
-def generate_speech(model, input_ids, attention_mask, output_path):
+def generate_speech(model, input_ids, attention_mask, speaker_embeddings, output_path):
     with torch.no_grad():
-        speech = model.generate_speech(input_ids, attention_mask=attention_mask)
+        speech = model.generate_speech(input_ids, attention_mask=attention_mask, speaker_embeddings=speaker_embeddings)
 
     # Reshape the speech tensor to [1, num_samples]
     speech = torch.reshape(speech, (1, -1)) # Reshape to [1, num_samples]
