@@ -91,6 +91,10 @@ def fine_tune_model(dataset, num_epochs=1, batch_size=6, learning_rate=1e-5):
     processor = SpeechT5Processor.from_pretrained("microsoft/speecht5_tts")
     model = SpeechT5ForTextToSpeech.from_pretrained("microsoft/speecht5_tts")
 
+    # Device configuration
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)  # Move model to GPU
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
     # Convert dataset into tensors and use DataLoader
@@ -117,9 +121,9 @@ def fine_tune_model(dataset, num_epochs=1, batch_size=6, learning_rate=1e-5):
         model.train()  # Set the model to training mode
 
         for i, sample in enumerate(dataloader):
-            input_ids = sample["input_ids"]
-            attention_mask = sample["attention_mask"]
-            mel_spectrograms = sample["mel_spectrograms"]
+            input_ids = sample["input_ids"].to(device)
+            attention_mask = sample["attention_mask"].to(device)
+            mel_spectrograms = sample["mel_spectrograms"].to(device)
 
             try:
                 # Forward pass
