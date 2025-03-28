@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 TARGET_SAMPLE_RATE = 16000  # Required by SpeechT5
 MEL_CHANNELS = 80
 AUDIO_LENGTH_SECONDS = 5
-TARGET_LENGTH = TARGET_SAMPLE_RATE * 10 # Changed to 12 seconds
+TARGET_LENGTH = TARGET_SAMPLE_RATE * 10 # Changed to 10 seconds
 
 # Helper Functions
 def load_json_dataset(json_path: str) -> List[Dict]:

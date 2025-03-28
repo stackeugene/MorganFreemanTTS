@@ -5,6 +5,11 @@
    "speaker_name": "coqui"
  },
  {
+   "audio_filepath": "SoundFiles/Morgan Freeman_00000045.wav",
+   "text": "go.",
+   "speaker_name": "coqui"
+ },
+ {
    "audio_filepath": "SoundFiles/Morgan Freeman_00000047.wav",
    "text": "right.",
    "speaker_name": "coqui"
