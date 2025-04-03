@@ -18,28 +18,33 @@ sudo ufw default deny incoming  # Block all incoming traffic by default
 sudo ufw default allow outgoing  # Allow all outgoing traffic
 
 # Step 2: Allow essential ports for the TTS program
-# SSH (for remote access)
-add_rule "OpenSSH"
+# Secure SSH Access (Ensure proper syntax)
+add_rule "22/tcp"  # Allow SSH (OpenSSH)
 
-# API Port (change 5000 to the port you are using for TTS)
+# API Port (5000) - Change this if your TTS program runs on a different port
 add_rule "5000/tcp"
 
-# HTTPS (for secure web access)
+# HTTPS (for secure web access if needed)
 add_rule "443/tcp"
 
-# Step 3: Optional - Restrict access to certain IPs for sensitive services
-# Replace YOUR_IP_ADDRESS with the allowed IP address
-# Uncomment and replace 'YOUR_IP_ADDRESS' to use
+# Optional: Restrict API Access to a Specific IP (Replace YOUR_IP_ADDRESS)
 # echo "Restricting API access to specific IP..."
 # sudo ufw allow from YOUR_IP_ADDRESS to any port 5000
 
-# Step 4: Enable UFW Logging to track allowed and denied connections
+# Step 3: Enable Rate Limiting to Prevent Abuse
+echo "Enabling rate limiting..."
+sudo ufw limit 22/tcp  # Protect SSH from brute force attacks
+sudo ufw limit 5000/tcp  # Limit API request rate to prevent abuse
+
+# Step 4: Block Unused and Risky Ports (Optional Hardening)
+echo "Blocking unnecessary ports..."
+sudo ufw deny 80/tcp  # Block HTTP to force HTTPS usage
+sudo ufw deny 23/tcp  # Block Telnet (insecure)
+sudo ufw deny 3389/tcp  # Block RDP (if not used)
+
+# Step 5: Enable UFW Logging for Monitoring
 echo "Enabling firewall logging..."
 sudo ufw logging on
-
-# Step 5: Enable rate limiting for SSH to prevent brute-force attacks
-echo "Enabling rate limiting for SSH..."
-sudo ufw limit OpenSSH
 
 # Step 6: Enable the firewall (if not already enabled)
 echo "Enabling the firewall..."
