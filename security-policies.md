@@ -1,40 +1,35 @@
-1. Authentication and Access Control
+Security Measures for the TTS System
+1️⃣ Authentication & Access Control
 
-Require strong authentication (OAuth 2.0, API keys, or JWT tokens) for accessing the TTS service.
-Implement Role-Based Access Control (RBAC) to restrict access to system components.
-Enforce multi-factor authentication (MFA) for administrative access.
+Require secure login methods like OAuth 2.0, API keys, or JWT tokens.
+Use Role-Based Access Control (RBAC) to limit who can access different parts of the system.
+Enforce Multi-Factor Authentication (MFA) for admin users.
+2️⃣ Data Encryption & Secure Transmission
 
-2. Data Encryption & Secure Transmission
+Encrypt stored voice data using AES-256 to keep it safe.
+Use TLS 1.2 or higher to protect API requests.
+Ensure all communications happen over HTTPS to prevent data interception.
+3️⃣ Input Validation & Protection Against Attacks
 
-Encrypt stored voice data using AES-256.
-Secure API requests and responses with TLS 1.2 or higher.
-Prevent unauthorized data interception using HTTPS-only communication.
+Sanitize user input to block SQL Injection, XSS, and command injection attacks.
+Restrict the length and type of characters users can submit.
+4️⃣ Rate Limiting & DDoS Protection
 
-3. Input Validation & Protection Against Injection Attacks
+Limit API requests to 100 per minute per user to prevent abuse.
+Use a Web Application Firewall (WAF) to block bots and DDoS attacks.
+Add CAPTCHA on public endpoints to prevent automated abuse.
+5️⃣ Logging & Monitoring
 
-Sanitize user input to prevent SQL Injection, XSS, or command injection attacks.
-Limit text length and special characters that users can submit.
+Track API requests and system logs in real time.
+Store logs for at least 90 days in a central system.
+Detect unusual activity, like excessive requests from a single IP.
+6️⃣ Secure Storage & Data Retention
 
-4. Rate Limiting & DDoS Protection
+Only keep user-generated voice data for as long as needed.
+Set logs to delete automatically after 30 days.
+Restrict access to stored audio files based on user roles.
+7️⃣ Incident Response Plan
 
-Set API request limits to prevent abuse (e.g., 100 requests per minute per user).
-Use a Web Application Firewall (WAF) to block automated bots and potential DDoS attacks.
-Implement CAPTCHA for public endpoints to prevent bot abuse.
-
-5. Logging & Monitoring
-
-Enable real-time monitoring of API requests and system logs using SIEM tools.
-Store logs in a centralized logging system with retention for at least 90 days.
-Implement anomaly detection for unusual TTS requests (e.g., excessive requests from a single IP).
-
-6. Secure Storage & Data Retention
-
-Store user-generated voice data only as long as necessary.
-Implement automatic log deletion after a defined retention period (e.g., 30 days).
-Use role-based permissions to restrict access to stored audio files.
-
-7. Incident Response Plan
-
-Establish an incident response protocol in case of a security breach.
-Ensure that automatic alerts are sent for suspicious activities.
-Conduct regular penetration tests to identify and fix vulnerabilities.
+Have a plan in place in case of a security breach.
+Send automatic alerts for suspicious activity.
+Run regular security tests to find and fix vulnerabilities.
