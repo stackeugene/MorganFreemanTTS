@@ -3,25 +3,205 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>I can smell you</title>
+    <title>Morgan Freeman TTS</title>
     <style>
         body {
-            background: linear-gradient(to right, #221b29, #4c1384);
-            height: 100vh;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
             margin: 0;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            color: #ffffff;
+        }
+        .container {
+            text-align: center;
+            padding: 40px 20px;
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            backdrop-filter: blur(4px);
+            margin-top: 40px;
+            margin-bottom: 40px;
+        }
+        .image-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+        .image-container img {
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            transition: transform 0.3s ease;
+        }
+        .image-container img:hover {
+            transform: scale(1.02);
+        }
+        textarea {
+            width: 100%;
+            max-width: 600px;
+            height: 120px;
+            padding: 15px;
+            border-radius: 10px;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            margin: 20px 0;
+            font-size: 16px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #ffffff;
+            resize: vertical;
+            transition: border-color 0.3s ease;
+        }
+        textarea:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+        textarea::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+        button {
+            width: 180px;
+            height: 45px;
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            margin: 10px;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.3);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        .audio-controls {
+            margin-top: 30px;
+            display: none;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 15px;
+        }
+        #audioPlayer {
+            width: 100%;
+            max-width: 600px;
+            margin: 20px 0;
+            border-radius: 10px;
+        }
+        .loading {
+            display: none;
+            color: #ffffff;
+            margin: 20px 0;
+            font-size: 18px;
+            font-weight: 500;
+        }
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 20px;
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 700;
+        }
+        p {
+            font-size: 1.1em;
+            line-height: 1.6;
+            color: rgba(255, 255, 255, 0.9);
+            margin-bottom: 30px;
+        }
+        em {
+            color: #4CAF50;
+            font-style: normal;
+            font-weight: 600;
+        }
+        @media (max-width: 768px) {
+            .container {
+                margin: 20px;
+                padding: 20px;
+            }
+            textarea {
+                height: 100px;
+            }
+            h1 {
+                font-size: 2em;
+            }
         }
     </style>
 </head>
-<body style="display: flex; justify-content: center; align-items: center; height: 100vh; flex-direction: column;">
-    <div>
-        <img src="dancing-banana.gif" alt="dance" style="width: 100px;">
-        <img src="Freeman.png" alt="I can smell you" style="width: 200px;">
-        <img src="dancing-banana.gif" alt="dance" style="width: 100px;">
+<body>
+    <div class="container">
+        <div class="image-container">
+            <img src="Freeman.png" alt="Morgan Freeman" style="width: 200px;">
+        </div>
+        <h1>Morgan Freeman Text-To-Speech</h1>
+        <p>Transform your text into Morgan Freeman's iconic voice. Type anything below and <em>experience the magic!</em></p>
+        <textarea id="speech" placeholder="Enter your text here..."></textarea>
+        <button onclick="generateSpeech()">Generate Speech</button>
+        <div class="loading" id="loading">Generating speech... Please wait...</div>
+        <div class="audio-controls" id="audioControls">
+            <audio id="audioPlayer" controls></audio>
+            <button onclick="downloadAudio()">Download Audio</button>
+        </div>
     </div>
-    <h1 style="color: white;"> Morgan Freeman Text-To-Speech</h1>
-    <p style="color: white;">Type anthing you want into the box below and <em>watch the magic happen!</em></p>
-    <textarea id="speech" style="width: 500px; height: 100px;"></textarea>
-    <p></p>
-    <button style="width: 130px; height: 40px;">Generate Speech</button>
+
+    <script>
+        async function generateSpeech() {
+            const text = document.getElementById('speech').value;
+            if (!text) {
+                alert('Please enter some text first!');
+                return;
+            }
+
+            const loading = document.getElementById('loading');
+            const audioControls = document.getElementById('audioControls');
+            const audioPlayer = document.getElementById('audioPlayer');
+
+            loading.style.display = 'block';
+            audioControls.style.display = 'none';
+
+            try {
+                // Replace this URL with your actual TTS API endpoint
+                const response = await fetch('YOUR_TTS_API_ENDPOINT', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ text: text })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to generate speech');
+                }
+
+                const audioBlob = await response.blob();
+                const audioUrl = URL.createObjectURL(audioBlob);
+                
+                audioPlayer.src = audioUrl;
+                audioControls.style.display = 'block';
+            } catch (error) {
+                alert('Error generating speech: ' + error.message);
+            } finally {
+                loading.style.display = 'none';
+            }
+        }
+
+        function downloadAudio() {
+            const audioPlayer = document.getElementById('audioPlayer');
+            const audioUrl = audioPlayer.src;
+            
+            const link = document.createElement('a');
+            link.href = audioUrl;
+            link.download = 'morgan-freeman-speech.wav';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    </script>
 </body>
 </html>
