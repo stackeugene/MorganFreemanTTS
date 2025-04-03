@@ -1,0 +1,19 @@
+{
+  "do_normalize": false,
+  "feature_extractor_type": "SpeechT5FeatureExtractor",
+  "feature_size": 1,
+  "fmax": 7600,
+  "fmin": 80,
+  "frame_signal_scale": 1.0,
+  "hop_length": 16,
+  "mel_floor": 1e-10,
+  "num_mel_bins": 80,
+  "padding_side": "right",
+  "padding_value": 0.0,
+  "processor_class": "SpeechT5Processor",
+  "reduction_factor": 2,
+  "return_attention_mask": true,
+  "sampling_rate": 16000,
+  "win_function": "hann_window",
+  "win_length": 64
+}
