@@ -82,28 +82,19 @@ def prepare_dataset(
     embedding_model=None,
     device="cpu"
 ) -> List[Dict]:
-    """Prepare dataset with support for both preprocessed and raw audio data."""
+    """Prepare dataset with proper error handling and logging."""
     processed_data = []
     
     for sample in dataset:
         try:
             logger.info(f"Sample keys: {sample.keys()}")  # Debug dataset structure
-
-            # ===== NEW: Check for preprocessed data first =====
-            if all(key in sample for key in ["mel_spectrogram", "input_ids", "attention_mask"]):
-                logger.info("Using preprocessed sample directly")
-                processed_data.append(sample)
-                continue
-                
-            # ===== Original audio processing logic (only for raw data) =====
-            audio_path = sample["audio_filepath"]
+            audio_path = sample["audio_filepath"]  # Replace with correct key, e.g., "path"
             waveform, sample_rate = torchaudio.load(audio_path)
-            
             if waveform.nelement() == 0:
                 raise ValueError("Empty audio file")
             
-            # Convert to mono and resample
-            waveform = waveform.mean(dim=0, keepdim=True)
+            # 2. Convert to mono and resample if needed
+            waveform = waveform.mean(dim=0, keepdim=True)  # [1, samples]
             if sample_rate != TARGET_SAMPLE_RATE:
                 waveform = torchaudio.functional.resample(
                     waveform, 
@@ -111,20 +102,20 @@ def prepare_dataset(
                     new_freq=TARGET_SAMPLE_RATE
                 )
             
-            # Pad/truncate
+            # 3. Pad/truncate to compatible length
             waveform = pad_or_truncate(waveform, TARGET_LENGTH)
             logger.info(f"Waveform length after pad/truncate: {waveform.shape[-1]}")
             
-            # Generate mel spectrogram
+            # 4. Generate mel spectrogram
             mel = waveform_to_mel(waveform)
-            logger.info(f"Mel shape: {mel.shape}")
+            logger.info(f"Mel shape before check: {mel.shape}")
             if mel.shape[0] != 80 or mel.shape[1] % 256 != 0:
                 raise ValueError(f"Invalid mel shape: {mel.shape}")
             
-            # Process text
+            # 5. Process text
             inputs = processor(text=sample["text"], return_tensors="pt")
             
-            # Get speaker embedding if available
+            # 6. Get speaker embedding if available
             speaker_embedding = None
             if embedding_model is not None:
                 with torch.no_grad():
@@ -140,7 +131,7 @@ def prepare_dataset(
             })
             
         except Exception as e:
-            logger.error(f"Skipping sample: {str(e)}", exc_info=True)
+            logger.error(f"Skipping sample with keys {sample.keys()}: {str(e)}", exc_info=True)
             continue
             
     if not processed_data:
@@ -172,38 +163,78 @@ def collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
 def fine_tune_model(
     train_dataset: List[Dict],
     val_dataset: List[Dict],
-    num_epochs: int = 10,
-    batch_size: int = 2,  # Reduced from 4
-    learning_rate: float = 5e-6,  # Reduced from 1e-5
-    output_dir: str = "./speecht5_finetuned"
+    num_epochs: int,  # These variables must be instantiated but not recommended to change
+    batch_size: int, # these will just get overwritten anyway, change elsewhere.
+    learning_rate: float,
+    output_dir: str = "./speecht5_finetuned",
+    resume_training: bool = False
 ) -> SpeechT5ForTextToSpeech:
-    """Training loop with improved stability and validation."""
+    """Complete training loop with resume capability."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(output_dir, exist_ok=True)
 
     # Initialize components
     processor = SpeechT5Processor.from_pretrained("microsoft/speecht5_tts")
-    model = SpeechT5ForTextToSpeech.from_pretrained("microsoft/speecht5_tts").to(device)
-    embedding_model = AutoModel.from_pretrained("facebook/wav2vec2-base-960h").to(device)  # Better compatibility
+    
+    # Load model with resume support
+    if resume_training and os.path.exists(output_dir):
+        logger.info(f"Resuming training from {output_dir}")
+        model = SpeechT5ForTextToSpeech.from_pretrained(output_dir).to(device)
+        
+        # Load optimizer state if available
+        optimizer_state_path = os.path.join(output_dir, "optimizer.pt")
+        if os.path.exists(optimizer_state_path):
+            optimizer_state = torch.load(optimizer_state_path)
+        else:
+            optimizer_state = None
+    else:
+        logger.info("Starting new training session")
+        model = SpeechT5ForTextToSpeech.from_pretrained("microsoft/speecht5_tts").to(device)
+        optimizer_state = None
 
     # Prepare datasets
-    train_data = prepare_dataset(train_dataset, processor, embedding_model, device)
-    val_data = prepare_dataset(val_dataset, processor, embedding_model, device)
-
+    if all(key in train_dataset[0] for key in ["mel_spectrogram", "input_ids", "attention_mask"]):
+        train_data = train_dataset
+        val_data = val_dataset
+        logger.info("Using preprocessed dataset directly")
+    else:
+        embedding_model = AutoModel.from_pretrained("facebook/wav2vec2-base-960h").to(device)
+        train_data = prepare_dataset(train_dataset, processor, embedding_model, device)
+        val_data = prepare_dataset(val_dataset, processor, embedding_model, device)
+    
     # DataLoaders
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(val_data, batch_size=batch_size, collate_fn=collate_fn)
-
-    # Optimizer with gradient clipping
+    
+    # Optimizer with resume support
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    if optimizer_state is not None:
+        optimizer.load_state_dict(optimizer_state)
+    
+    # Training state initialization
+    start_epoch = 0
+    best_loss = float('inf')
+    patience_counter = 0
+    patience = 5
+    threshold = 0.01
+    
+    # Load training state if resuming
+    if resume_training:
+        training_state_path = os.path.join(output_dir, "training_state.pt")
+        if os.path.exists(training_state_path):
+            training_state = torch.load(training_state_path)
+            start_epoch = training_state["epoch"]
+            best_loss = training_state["best_loss"]
+            patience_counter = training_state["patience_counter"]
+            logger.info(f"Resuming from epoch {start_epoch} with best loss {best_loss:.4f}")
+
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
-        num_warmup_steps=500,  # Added warmup
+        num_warmup_steps=500,
         num_training_steps=len(train_loader) * num_epochs
     )
-
-    best_loss = float('inf')
-    for epoch in range(num_epochs):
+    
+    for epoch in range(start_epoch, num_epochs):
         model.train()
         epoch_loss = 0
         
@@ -220,34 +251,34 @@ def fine_tune_model(
             outputs = model(**inputs)
             loss = outputs.loss
             loss.backward()
-            
-            # Gradient clipping
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            
             optimizer.step()
             scheduler.step()
+            
             epoch_loss += loss.item()
-
-        # Validation and early stopping
+        
         val_loss = evaluate_model(model, val_loader, device)
         logger.info(f"Epoch {epoch+1} | Train Loss: {epoch_loss/len(train_loader):.4f} | Val Loss: {val_loss:.4f}")
-
-        # Generate validation sample every 5 epochs
-        if (epoch + 1) % 5 == 0:
-            generate_validation_sample(
-                model=model,
-                processor=processor,
-                val_data=val_data[0],  # First validation sample
-                epoch=epoch+1,
-                output_dir=output_dir
-            )
-
-        # Early stopping logic (unchanged)
-        if val_loss < best_loss - 0.01:
+        
+        # Early stopping and checkpointing
+        if val_loss < best_loss - threshold:
             best_loss = val_loss
+            patience_counter = 0
             model.save_pretrained(output_dir)
             processor.save_pretrained(output_dir)
-
+            torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
+            torch.save({
+                "epoch": epoch + 1,
+                "best_loss": best_loss,
+                "patience_counter": patience_counter
+            }, os.path.join(output_dir, "training_state.pt"))
+            logger.info(f"Checkpoint saved at epoch {epoch+1}")
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                logger.info(f"Early stopping at epoch {epoch+1}")
+                break
+    
     return model
 
 def evaluate_model(model, dataloader, device):
@@ -264,48 +295,6 @@ def evaluate_model(model, dataloader, device):
             outputs = model(**inputs)
             total_loss += outputs.loss.item()
     return total_loss / len(dataloader)
-
-def generate_validation_sample(
-    model: SpeechT5ForTextToSpeech,
-    processor: SpeechT5Processor,
-    val_data: Dict,
-    epoch: int,
-    output_dir: str,
-    vocoder: Optional[SpeechT5HifiGan] = None
-) -> None:
-    """Generate and save a sample from validation data for quality inspection."""
-    device = model.device
-    os.makedirs(f"{output_dir}/samples", exist_ok=True)
-    
-    # Load vocoder if not provided
-    if vocoder is None:
-        vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan").to(device)
-
-    # Prepare inputs
-    input_ids = val_data["input_ids"].unsqueeze(0).to(device)
-    attention_mask = val_data["attention_mask"].unsqueeze(0).to(device)
-    speaker_embedding = val_data["speaker_embedding"].unsqueeze(0).to(device) if val_data["speaker_embedding"] is not None else None
-
-    # Generate and save
-    with torch.no_grad():
-        mel = model.generate_speech(
-            input_ids,
-            attention_mask=attention_mask,
-            speaker_embeddings=speaker_embedding
-        )
-        waveform = vocoder(mel)
-
-    # Save audio
-    output_path = f"{output_dir}/samples/epoch_{epoch}.wav"
-    torchaudio.save(output_path, waveform.cpu(), TARGET_SAMPLE_RATE)
-
-    # Save ground truth for comparison
-    if "mel_spectrogram" in val_data:
-        gt_mel = val_data["mel_spectrogram"].T.unsqueeze(0).to(device)
-        gt_waveform = vocoder(gt_mel)
-        torchaudio.save(f"{output_dir}/samples/epoch_{epoch}_GROUND_TRUTH.wav", gt_waveform.cpu(), TARGET_SAMPLE_RATE)
-
-    logger.info(f"Saved validation sample for epoch {epoch} to {output_path}")
 
 def compute_average_speaker_embedding(dataset: List[Dict]) -> torch.Tensor:
     """Compute an average speaker embedding from the dataset."""
@@ -441,128 +430,78 @@ def trim_silence(waveform: torch.Tensor, sample_rate: int, threshold_db: float =
     return waveform[..., :end_point]
 
 if __name__ == "__main__":
-    test_text = input("Please type something you would like Morgan Freeman to say: ")
+    test_text = input("Please input what you would like Morgan Freeman to say: ")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     output_dir = "./speecht5_finetuned"
     embedding_file = "avg_speaker_embedding.pt"
     
-    # Check for pretrained model
-    if os.path.exists(output_dir):
-        print(f"\n{'='*50}")
-        print(f"Found pretrained model at: {os.path.abspath(output_dir)}")
-        print("="*50)
-        
-        # Robust input validation
-        while True:
-            response = input("\nWould you like to:\n"
-                           "1. Skip training and use existing model (fast)\n"
-                           "2. Retrain new model (slow)\n"
-                           "Enter choice (1/2): ").strip()
-            
-            if response in ('1', '2'):
-                skip_training = (response == '1')
-                break
-            print("Invalid input! Please enter 1 or 2")
-        
-        if skip_training:
-            logger.info("Loading pretrained model...")
-            try:
-                # Try loading without low_cpu_mem_usage first
-                try:
-                    processor = SpeechT5Processor.from_pretrained(output_dir)
-                    model = SpeechT5ForTextToSpeech.from_pretrained(output_dir).to(device)
-                except ImportError:
-                    print("\nWarning: For optimal memory usage, install accelerate:")
-                    print("pip install 'accelerate>=0.26.0'")
-                    processor = SpeechT5Processor.from_pretrained(output_dir)
-                    model = SpeechT5ForTextToSpeech.from_pretrained(
-                        output_dir,
-                        low_cpu_mem_usage=False  # Fallback option
-                    ).to(device)
-                
-                # Load or compute speaker embeddings
-                if os.path.exists(embedding_file):
-                    logger.info("Loading speaker embeddings...")
-                    avg_speaker_embedding = torch.load(embedding_file)
-                else:
-                    logger.info("Computing speaker embeddings...")
-                    train_data = load_json_dataset("SoundFiles/metadata_train.json")
-                    embedding_model = AutoModel.from_pretrained(
-                        "facebook/wav2vec2-base-960h",
-                        low_cpu_mem_usage=False  # Disable for stability
-                    ).to(device)
-                    
-                    # Reduce logging during embedding computation
-                    original_log_level = logger.level
-                    logger.setLevel(logging.WARNING)
-                    train_processed = prepare_dataset(train_data, processor, embedding_model, device)
-                    logger.setLevel(original_log_level)
-                    
-                    avg_speaker_embedding = compute_average_speaker_embedding(train_processed)
-                    torch.save(avg_speaker_embedding, embedding_file)
-                
-            except Exception as e:
-                logger.error(f"Failed to load pretrained model: {str(e)}")
-                print("\nFalling back to training new model...")
-                skip_training = False
+    # Training options
+    print(f"\n{'='*50}")
+    print(f"Found model at: {os.path.abspath(output_dir)}" if os.path.exists(output_dir) else "No existing model found")
+    print("="*50)
     
-    # Training block (only if not skipping)
-    if not skip_training:
-        print("\nPreparing to train new model...")
-        logger.info("Loading and processing datasets...")
+    while True:
+        choice = input("\nOptions:\n"
+                      "1. Train new model\n"
+                      "2. Resume training\n"
+                      "3. Skip training and generate only\n"
+                      "Enter choice (1/2/3): ").strip()
         
-        # Load datasets
+        if choice in ('1', '2', '3'):
+            break
+        print("Invalid input! Please enter 1, 2, or 3")
+
+    if choice != '3':
+        # Load and prepare datasets
         train_data = load_json_dataset("SoundFiles/metadata_train.json")
         val_data = load_json_dataset("SoundFiles/metadata_eval.json")
         
-        # Initialize components
         processor = SpeechT5Processor.from_pretrained("microsoft/speecht5_tts")
         embedding_model = AutoModel.from_pretrained("facebook/wav2vec2-base-960h").to(device)
         
-        # Prepare datasets
         train_processed = prepare_dataset(train_data, processor, embedding_model, device)
         val_processed = prepare_dataset(val_data, processor, embedding_model, device)
         
-        # Debug output
-        sample = train_processed[0]
-        print("\nDataset Verification:")
-        print(f"- Mel spectrogram shape: {sample['mel_spectrogram'].shape} (time, 80)")
-        print(f"- Text sequence length: {sample['input_ids'].shape[0]}")
-        if sample["speaker_embedding"] is not None:
-            print(f"- Speaker embedding size: {sample['speaker_embedding'].shape}")
-        
-        # Train model
-        print("\nStarting training...")
+        # Train with selected option
         model = fine_tune_model(
             train_processed,
             val_processed,
-            output_dir=output_dir
+            num_epochs=30, # this is what should be changed if epochs need to change
+            batch_size=2,
+            learning_rate=5e-6,
+            output_dir=output_dir,
+            resume_training=(choice == '2')
         )
         
         # Compute and save speaker embedding
         avg_speaker_embedding = compute_average_speaker_embedding(train_processed)
         torch.save(avg_speaker_embedding, embedding_file)
     
-    # Generation block (always executes)
-    print("\nGenerating sample audio...")
-    
-    
-    # Prepare inputs
-    inputs = processor(text=test_text, return_tensors="pt")
-    model.generation_config.max_length = inputs["input_ids"].shape[-1] + 100
-    
-    # Generate speech
-    generate_speech(
-        model,
-        inputs["input_ids"],
-        inputs["attention_mask"],
-        "morgan_freeman.wav",
-        avg_speaker_embedding
-    )
-    
-    # Play result
-    print("\nGeneration complete! Playing audio...")
-    if platform.system() == "Darwin":
-        os.system("open morgan_freeman.wav")
-    elif platform.system() == "Windows":
-        os.system("start morgan_freeman.wav")
+    # Generation block
+    if os.path.exists(output_dir):
+        print("\nGenerating sample audio...")
+        processor = SpeechT5Processor.from_pretrained(output_dir)
+        model = SpeechT5ForTextToSpeech.from_pretrained(output_dir).to(device)
+        
+        if os.path.exists(embedding_file):
+            avg_speaker_embedding = torch.load(embedding_file)
+        else:
+            raise FileNotFoundError(f"Speaker embedding file {embedding_file} not found")
+        
+        inputs = processor(text=test_text, return_tensors="pt")
+        model.generation_config.max_length = inputs["input_ids"].shape[-1] + 100
+        
+        generate_speech(
+            model,
+            inputs["input_ids"],
+            inputs["attention_mask"],
+            "morgan_freeman.wav",
+            avg_speaker_embedding
+        )
+        
+        # Play result
+        print("\nGeneration complete! Playing audio...")
+        if platform.system() == "Darwin":
+            os.system("open morgan_freeman.wav")
+        elif platform.system() == "Windows":
+            os.system("start morgan_freeman.wav")
