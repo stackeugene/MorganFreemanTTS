@@ -186,17 +186,26 @@ def prepare_dataset(
 ) -> List[Dict]:
     """Prepare dataset with proper error handling and logging."""
     processed_data = []
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     
     for sample in dataset:
         try:
-            logger.info(f"Sample keys: {sample.keys()}")  # Debug dataset structure
-            audio_path = sample["audio_filepath"]  # Replace with correct key, e.g., "path"
+            audio_path = sample["audio_filepath"]
+            if not os.path.isabs(audio_path):
+                audio_path = os.path.join(script_dir, audio_path)
+            
+            if not os.path.exists(audio_path):
+                raise FileNotFoundError(f"Audio file does not exist: {audio_path}")
+            
+            logger.info(f"Loading audio: {audio_path}")
+            # Add debug info
+            logger.debug(f"File size: {os.path.getsize(audio_path)} bytes")
             waveform, sample_rate = torchaudio.load(audio_path)
             if waveform.nelement() == 0:
-                raise ValueError("Empty audio file")
+                raise ValueError(f"Empty audio file: {audio_path}")
             
-            # 2. Convert to mono and resample if needed
-            waveform = waveform.mean(dim=0, keepdim=True)  # [1, samples]
+            logger.info(f"Sample keys: {sample.keys()}")
+            waveform = waveform.mean(dim=0, keepdim=True)
             if sample_rate != TARGET_SAMPLE_RATE:
                 waveform = torchaudio.functional.resample(
                     waveform, 
@@ -204,20 +213,16 @@ def prepare_dataset(
                     new_freq=TARGET_SAMPLE_RATE
                 )
             
-            # 3. Pad/truncate to compatible length
             waveform = pad_or_truncate(waveform, TARGET_LENGTH)
             logger.info(f"Waveform length after pad/truncate: {waveform.shape[-1]}")
             
-            # 4. Generate mel spectrogram
             mel = waveform_to_mel(waveform)
             logger.info(f"Mel shape before check: {mel.shape}")
             if mel.shape[0] != 80 or mel.shape[1] % 256 != 0:
                 raise ValueError(f"Invalid mel shape: {mel.shape}")
             
-            # 5. Process text
             inputs = processor(text=sample["text"], return_tensors="pt")
             
-            # 6. Get speaker embedding if available
             speaker_embedding = None
             if embedding_model is not None:
                 with torch.no_grad():
@@ -226,7 +231,7 @@ def prepare_dataset(
                     speaker_embedding = outputs.last_hidden_state.mean(dim=1).squeeze(0).cpu()
             
             processed_data.append({
-                "mel_spectrogram": mel.T,  # [time, 80]
+                "mel_spectrogram": mel.T,
                 "input_ids": inputs["input_ids"].squeeze(0),
                 "attention_mask": inputs["attention_mask"].squeeze(0),
                 "speaker_embedding": speaker_embedding
@@ -239,7 +244,6 @@ def prepare_dataset(
     if not processed_data:
         raise RuntimeError("No valid audio files processed - check your dataset paths and file formats")
     
-    # Debug first sample
     sample = processed_data[0]
     logger.info(f"First sample - Mel shape: {sample['mel_spectrogram'].shape}")
     logger.info(f"First sample - Text length: {sample['input_ids'].shape[0]}")
@@ -425,6 +429,18 @@ def compute_average_speaker_embedding(dataset: List[Dict]) -> torch.Tensor:
     linear_transform = torch.nn.Linear(768, 512)
     return linear_transform(avg_embedding).detach()  # [512]
 
+def apply_bass_boost(waveform: torch.Tensor, sample_rate: int = TARGET_SAMPLE_RATE, gain_db: float = 3.0) -> torch.Tensor:
+    """Placeholder for bass boost - currently just normalizes waveform."""
+    from torchaudio import functional as F
+
+    # Ensure waveform is 2D [channels, samples]
+    if waveform.dim() == 1:
+        waveform = waveform.unsqueeze(0)
+
+    # Normalize to prevent clipping (placeholder until bass boost is implemented)
+    boosted_waveform = waveform / (waveform.abs().max() + 1e-7)
+    return boosted_waveform
+
 def generate_speech(
     model: SpeechT5ForTextToSpeech,
     input_ids: torch.Tensor,
@@ -435,13 +451,10 @@ def generate_speech(
     model.eval()
     
     # Load vocoder
-    vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan").to(device)
-    # Add post-processing to deepen output
-    output_waveform = apply_bass_boost(vocoder(mel_spectrogram), gain_db=+3.0)
+    vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan").to(model.device)
     
     # Configure generation parameters properly
     if hasattr(model, 'generation_config'):
-        # Correct way to update generation config
         model.generation_config.update(
             do_sample=True,
             temperature=0.7,
@@ -450,7 +463,6 @@ def generate_speech(
             return_output_lengths=True
         )
     else:
-        # Fallback if generation_config doesn't exist
         model.generation_config = {
             'do_sample': True,
             'temperature': 0.7,
@@ -473,7 +485,7 @@ def generate_speech(
             attention_mask=attention_mask,
             speaker_embeddings=speaker_embedding.unsqueeze(0).to(model.device)
         )
-            
+        
         # Handle tuple output (spectrogram, lengths) if returned
         if isinstance(generation_output, tuple):
             mel_spectrogram, output_lengths = generation_output
@@ -481,47 +493,43 @@ def generate_speech(
         else:
             mel_spectrogram = generation_output
             logger.info(f"Mel spectrogram shape: {mel_spectrogram.shape}")
-            
-            # Convert to waveform
+        
+        # Convert to waveform and apply bass boost (currently just normalization)
         speech = vocoder(mel_spectrogram)
-            
+        output_waveform = apply_bass_boost(speech, gain_db=+3.0)
+        
         # Ensure proper shape [channels, samples]
-        if speech.dim() == 1:
-            speech = speech.unsqueeze(0)  # [samples] -> [1, samples]
-        elif speech.dim() == 3:
-            speech = speech.squeeze(0)  # [1, channels, samples] -> [channels, samples]
-            
-        # Verify and normalize audio
-        if speech.abs().max() < 1e-6:
+        if output_waveform.dim() == 1:
+            output_waveform = output_waveform.unsqueeze(0)
+        elif output_waveform.dim() == 3:
+            output_waveform = output_waveform.squeeze(0)
+        
+        # Verify audio
+        if output_waveform.abs().max() < 1e-6:
             raise ValueError("Generated audio is silent")
-        speech = speech / (speech.abs().max() + 1e-7)
-            
+        
         # Trim trailing silence
-        speech = trim_silence(speech, sample_rate=TARGET_SAMPLE_RATE)
-            
+        output_waveform = trim_silence(output_waveform, sample_rate=TARGET_SAMPLE_RATE)
+        
         # Calculate final duration
-        duration = speech.shape[-1] / TARGET_SAMPLE_RATE
+        duration = output_waveform.shape[-1] / TARGET_SAMPLE_RATE
         logger.info(f"Final speech duration: {duration:.2f} seconds")
-            
+        
         # Ensure output directory exists
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-            
+        
         # Save with fallback options
         try:
-            torchaudio.save(output_path, speech.cpu(), TARGET_SAMPLE_RATE)
+            torchaudio.save(output_path, output_waveform.cpu(), TARGET_SAMPLE_RATE)
         except Exception as e:
             logger.warning(f"Primary save failed, trying backup method: {str(e)}")
             import soundfile as sf
             sf.write(
                 output_path,
-                speech.squeeze().cpu().numpy(),
+                output_waveform.squeeze().cpu().numpy(),
                 TARGET_SAMPLE_RATE
             )
-                
-        except Exception as e:
-            logger.error(f"Audio generation failed: {str(e)}")
-            raise
-        
+
     logger.info(f"Successfully saved to {os.path.abspath(output_path)}")
 
 def trim_silence(waveform: torch.Tensor, sample_rate: int, threshold_db: float = -40) -> torch.Tensor:

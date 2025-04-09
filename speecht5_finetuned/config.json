@@ -1,5 +1,4 @@
 {
-  "_name_or_path": "microsoft/speecht5_tts",
   "activation_dropout": 0.1,
   "apply_spec_augment": true,
   "architectures": [
@@ -85,7 +84,7 @@
   "speech_decoder_prenet_layers": 2,
   "speech_decoder_prenet_units": 256,
   "torch_dtype": "float32",
-  "transformers_version": "4.49.0",
+  "transformers_version": "4.51.1",
   "use_cache": true,
   "use_guided_attention_loss": true,
   "vocab_size": 81

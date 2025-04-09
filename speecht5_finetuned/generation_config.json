@@ -5,5 +5,5 @@
   "eos_token_id": 2,
   "max_length": 1876,
   "pad_token_id": 1,
-  "transformers_version": "4.49.0"
+  "transformers_version": "4.51.1"
 }
