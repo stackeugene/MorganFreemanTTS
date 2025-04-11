@@ -1,13 +1,17 @@
 import os
+import random
 import platform
 import json
 import torch
 import torchaudio
+import numpy as np
 import torch.nn.functional as F
+from torchaudio import transforms as T
 from torch.utils.data import DataLoader
 from transformers import SpeechT5Processor, SpeechT5ForTextToSpeech, get_linear_schedule_with_warmup, AutoModel, SpeechT5HifiGan, EarlyStoppingCallback
 import logging
 from typing import List, Dict, Optional
+from torchaudio.sox_effects import apply_effects_tensor
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -19,6 +23,103 @@ MEL_CHANNELS = 80
 HOP_LENGTH = 256  # Must match SpeechT5's decoder
 DESIRED_FRAMES = 768  # Multiple of 256, close to original 12 seconds
 TARGET_LENGTH = (DESIRED_FRAMES - 1) * HOP_LENGTH + 2048  # 198,400 samples
+
+class AudioAugmenter:
+    """Handles all audio data augmentation transformations"""
+    
+    def __init__(self, sample_rate=TARGET_SAMPLE_RATE):
+        self.sample_rate = sample_rate
+        self.noise_levels = [0.0005, 0.001]  # Reduced noise to preserve low frequencies
+        self.speed_factors = [0.85, 0.9, 1.0]  # More slowing to deepen apparent voice
+        self.pitch_shifts = [-3, -2, -1]  # Only lower pitches
+        self.volume_factors = [0.7, 1.0]  # Avoid amplification that emphasizes highs
+        self.time_shift_max = 0.1  # Max 100ms shift
+        
+    def add_noise(self, waveform):
+        """Add Gaussian noise to audio"""
+        noise_level = random.choice(self.noise_levels)
+        noise = torch.randn_like(waveform) * noise_level
+        return waveform + noise
+    
+    def change_speed(self, waveform):
+        """Change speed without affecting pitch (sox effect)"""
+        speed_factor = random.choice(self.speed_factors)
+        if speed_factor == 1.0:  # No change
+            return waveform
+            
+        effects = [
+            ["speed", str(speed_factor)],
+            ["rate", str(self.sample_rate)]
+        ]
+        augmented, _ = apply_effects_tensor(
+            waveform, 
+            self.sample_rate, 
+            effects
+        )
+        return augmented
+    
+    def pitch_shift(self, waveform):
+        """Shift pitch while maintaining duration"""
+        n_steps = random.choice(self.pitch_shifts)
+        if n_steps == 0:  # No change
+            return waveform
+            
+        transform = T.PitchShift(
+            self.sample_rate,
+            n_steps,
+            n_fft=2048,
+            win_length=1024,
+            hop_length=HOP_LENGTH
+        )
+        return transform(waveform)
+    
+    def adjust_volume(self, waveform):
+        """Adjust volume by random factor"""
+        volume_factor = random.choice(self.volume_factors)
+        return waveform * volume_factor
+    
+    def time_shift(self, waveform):
+        """Randomly shift audio in time"""
+        max_shift = int(self.sample_rate * self.time_shift_max)
+        shift = random.randint(-max_shift, max_shift)
+        
+        if shift > 0:
+            # Shift forward (pad beginning)
+            shifted = F.pad(waveform[..., shift:], (0, shift))
+        elif shift < 0:
+            # Shift backward (pad end)
+            shifted = F.pad(waveform[..., :shift], (-shift, 0))
+        else:
+            shifted = waveform
+            
+        return shifted
+    
+    def frequency_mask(self, mel_spectrogram):
+        """Apply frequency masking to mel spectrogram"""
+        freq_mask_param = random.randint(5, 15)  # Mask 5-15 frequency bins
+        return T.FrequencyMasking(freq_mask_param)(mel_spectrogram)
+    
+    def random_augment(self, waveform, apply_prob=0.5):
+        """Apply random augmentations with given probability"""
+        if random.random() > apply_prob:
+            return waveform
+            
+        # Apply augmentations in random order
+        augmentations = [
+            self.add_noise,
+            self.change_speed,
+            self.pitch_shift,
+            self.adjust_volume,
+            self.time_shift
+        ]
+        random.shuffle(augmentations)
+        
+        # Apply 2-3 random augmentations (not all)
+        num_augmentations = random.randint(2, 3)
+        for aug in augmentations[:num_augmentations]:
+            waveform = aug(waveform)
+            
+        return waveform
 
 def load_json_dataset(json_path: str) -> List[Dict]:
     """Load dataset from JSON file with error handling."""
@@ -80,7 +181,8 @@ def prepare_dataset(
     dataset: List[Dict],
     processor: SpeechT5Processor,
     embedding_model=None,
-    device="cpu"
+    device="cpu",
+    augment: bool = False
 ) -> List[Dict]:
     """Prepare dataset with proper error handling and logging."""
     processed_data = []
@@ -163,20 +265,24 @@ def collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
 def fine_tune_model(
     train_dataset: List[Dict],
     val_dataset: List[Dict],
-    num_epochs: int,  # These variables must be instantiated but not recommended to change
-    batch_size: int, # these will just get overwritten anyway, change elsewhere.
+    num_epochs: int,
+    batch_size: int,
     learning_rate: float,
     output_dir: str = "./speecht5_finetuned",
-    resume_training: bool = False
+    resume_training: bool = False,
+    use_augmentation: bool = False
 ) -> SpeechT5ForTextToSpeech:
-    """Complete training loop with resume capability."""
+    """Complete training loop with resume capability and deeper voice initialization."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     os.makedirs(output_dir, exist_ok=True)
 
-    # Initialize components
+    # Log augmentation status
+    logger.info(f"Data augmentation during training: {'ENABLED' if use_augmentation else 'DISABLED'}")
+    
+    # Initialize processor
     processor = SpeechT5Processor.from_pretrained("microsoft/speecht5_tts")
     
-    # Load model with resume support
+    # Load model with resume support and deeper voice initialization
     if resume_training and os.path.exists(output_dir):
         logger.info(f"Resuming training from {output_dir}")
         model = SpeechT5ForTextToSpeech.from_pretrained(output_dir).to(device)
@@ -189,7 +295,19 @@ def fine_tune_model(
             optimizer_state = None
     else:
         logger.info("Starting new training session")
-        model = SpeechT5ForTextToSpeech.from_pretrained("microsoft/speecht5_tts").to(device)
+        try:
+            # First attempt to load with deep-male preset
+            model = SpeechT5ForTextToSpeech.from_pretrained(
+                "microsoft/speecht5_tts",
+                voice_preset="deep-male"  # Try to initialize with deeper voice
+            ).to(device)
+            logger.info("Model initialized with deep-male voice preset")
+        except (ValueError, AttributeError, TypeError):
+            # Fallback to regular initialization if preset not available
+            model = SpeechT5ForTextToSpeech.from_pretrained(
+                "microsoft/speecht5_tts"
+            ).to(device)
+            logger.info("Model initialized with standard preset (deep-male not available)")
         optimizer_state = None
 
     # Prepare datasets
@@ -199,8 +317,8 @@ def fine_tune_model(
         logger.info("Using preprocessed dataset directly")
     else:
         embedding_model = AutoModel.from_pretrained("facebook/wav2vec2-base-960h").to(device)
-        train_data = prepare_dataset(train_dataset, processor, embedding_model, device)
-        val_data = prepare_dataset(val_dataset, processor, embedding_model, device)
+        train_data = prepare_dataset(train_dataset, processor, embedding_model, device, augment=use_augmentation)
+        val_data = prepare_dataset(val_dataset, processor, embedding_model, device, augment=False)
     
     # DataLoaders
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
@@ -307,6 +425,17 @@ def compute_average_speaker_embedding(dataset: List[Dict]) -> torch.Tensor:
     linear_transform = torch.nn.Linear(768, 512)
     return linear_transform(avg_embedding).detach()  # [512]
 
+def apply_bass_boost(waveform, sample_rate=16000, gain_db=3.0, cutoff_freq=150):
+    """Deepens voice output via EQ and gain."""
+    # Low-pass filter to reduce high frequencies
+    waveform = torchaudio.functional.lowpass_biquad(
+        waveform, 
+        sample_rate=sample_rate, 
+        cutoff_freq=cutoff_freq
+    )
+    # Amplify the bass
+    return torchaudio.functional.gain(waveform, gain_db)
+
 def generate_speech(
     model: SpeechT5ForTextToSpeech,
     input_ids: torch.Tensor,
@@ -315,13 +444,13 @@ def generate_speech(
     speaker_embedding: torch.Tensor,
 ) -> None:
     model.eval()
+    device = model.device
     
     # Load vocoder
-    vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan").to(model.device)
+    vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan").to(device)
     
-    # Configure generation parameters properly
+    # Configure generation parameters
     if hasattr(model, 'generation_config'):
-        # Correct way to update generation config
         model.generation_config.update(
             do_sample=True,
             temperature=0.7,
@@ -330,7 +459,6 @@ def generate_speech(
             return_output_lengths=True
         )
     else:
-        # Fallback if generation_config doesn't exist
         model.generation_config = {
             'do_sample': True,
             'temperature': 0.7,
@@ -339,22 +467,29 @@ def generate_speech(
             'return_output_lengths': True
         }
     
+    def apply_bass_boost(waveform, sample_rate=16000, gain_db=3.0, cutoff_freq=150):
+        """Deepens voice output via EQ and gain."""
+        waveform = torchaudio.functional.lowpass_biquad(
+            waveform, sample_rate, cutoff_freq=cutoff_freq
+        )
+        return torchaudio.functional.gain(waveform, gain_db)
+
     with torch.no_grad():
         # Warmup generation
         _ = model.generate_speech(
             input_ids[:,:10],
             attention_mask=attention_mask[:,:10] if attention_mask is not None else None,
-            speaker_embeddings=speaker_embedding.unsqueeze(0).to(model.device)
+            speaker_embeddings=speaker_embedding.unsqueeze(0).to(device)
         )
         
         # Generate mel spectrogram
         generation_output = model.generate_speech(
             input_ids,
             attention_mask=attention_mask,
-            speaker_embeddings=speaker_embedding.unsqueeze(0).to(model.device)
-        )
+            speaker_embeddings=speaker_embedding.unsqueeze(0).to(device)
+            )
             
-        # Handle tuple output (spectrogram, lengths) if returned
+        # Handle output formats
         if isinstance(generation_output, tuple):
             mel_spectrogram, output_lengths = generation_output
             logger.info(f"Generated {output_lengths.item()} frames")
@@ -362,47 +497,34 @@ def generate_speech(
             mel_spectrogram = generation_output
             logger.info(f"Mel spectrogram shape: {mel_spectrogram.shape}")
             
-            # Convert to waveform
+        # Convert to waveform and apply processing
         speech = vocoder(mel_spectrogram)
+        speech = apply_bass_boost(speech, TARGET_SAMPLE_RATE, gain_db=4.0)
             
-        # Ensure proper shape [channels, samples]
+        # Ensure proper shape
         if speech.dim() == 1:
-            speech = speech.unsqueeze(0)  # [samples] -> [1, samples]
+            speech = speech.unsqueeze(0)
         elif speech.dim() == 3:
-            speech = speech.squeeze(0)  # [1, channels, samples] -> [channels, samples]
+            speech = speech.squeeze(0)
             
-        # Verify and normalize audio
+        # Validate and normalize
         if speech.abs().max() < 1e-6:
             raise ValueError("Generated audio is silent")
         speech = speech / (speech.abs().max() + 1e-7)
             
-        # Trim trailing silence
+        # Trim silence
         speech = trim_silence(speech, sample_rate=TARGET_SAMPLE_RATE)
             
-        # Calculate final duration
-        duration = speech.shape[-1] / TARGET_SAMPLE_RATE
-        logger.info(f"Final speech duration: {duration:.2f} seconds")
-            
-        # Ensure output directory exists
+        # Save output
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-            
-        # Save with fallback options
         try:
             torchaudio.save(output_path, speech.cpu(), TARGET_SAMPLE_RATE)
         except Exception as e:
-            logger.warning(f"Primary save failed, trying backup method: {str(e)}")
+            logger.warning(f"Primary save failed: {str(e)}")
             import soundfile as sf
-            sf.write(
-                output_path,
-                speech.squeeze().cpu().numpy(),
-                TARGET_SAMPLE_RATE
-            )
-                
-        except Exception as e:
-            logger.error(f"Audio generation failed: {str(e)}")
-            raise
+            sf.write(output_path, speech.squeeze().cpu().numpy(), TARGET_SAMPLE_RATE)
         
-    logger.info(f"Successfully saved to {os.path.abspath(output_path)}")
+    logger.info(f"Audio saved to {os.path.abspath(output_path)}")
 
 def trim_silence(waveform: torch.Tensor, sample_rate: int, threshold_db: float = -40) -> torch.Tensor:
     """Trim trailing silence from waveform using energy threshold."""
@@ -434,6 +556,9 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     output_dir = "./speecht5_finetuned"
     embedding_file = "avg_speaker_embedding.pt"
+
+    # Initialize augmentation flag
+    use_augmentation = False
     
     # Training options
     print(f"\n{'='*50}")
@@ -452,6 +577,16 @@ if __name__ == "__main__":
         print("Invalid input! Please enter 1, 2, or 3")
 
     if choice != '3':
+        # Ask about data augmentation only when training new model
+        if choice == '1':
+            while True:
+                aug_choice = input("\nEnable data augmentation? (y/n)\n"
+                                 "(Helps with small datasets but increases training time): ").strip().lower()
+                if aug_choice in ('y', 'n'):
+                    use_augmentation = (aug_choice == 'y')
+                    break
+                print("Invalid input! Please enter y or n")
+        
         # Load and prepare datasets
         train_data = load_json_dataset("SoundFiles/metadata_train.json")
         val_data = load_json_dataset("SoundFiles/metadata_eval.json")
@@ -459,18 +594,22 @@ if __name__ == "__main__":
         processor = SpeechT5Processor.from_pretrained("microsoft/speecht5_tts")
         embedding_model = AutoModel.from_pretrained("facebook/wav2vec2-base-960h").to(device)
         
-        train_processed = prepare_dataset(train_data, processor, embedding_model, device)
-        val_processed = prepare_dataset(val_data, processor, embedding_model, device)
+        # Prepare datasets with augmentation only for training new models
+        train_augment = use_augmentation and choice == '1'
+        print(f"\nPreparing datasets with augmentation {'ENABLED' if train_augment else 'DISABLED'}...")
+        train_processed = prepare_dataset(train_data, processor, embedding_model, device, augment=train_augment)
+        val_processed = prepare_dataset(val_data, processor, embedding_model, device, augment=False)
         
         # Train with selected option
         model = fine_tune_model(
             train_processed,
             val_processed,
-            num_epochs=30, # this is what should be changed if epochs need to change
-            batch_size=2,
-            learning_rate=5e-6,
+            num_epochs=45,
+            batch_size=4,
+            learning_rate=3e-6,
             output_dir=output_dir,
-            resume_training=(choice == '2')
+            resume_training=(choice == '2'),
+            use_augmentation=use_augmentation
         )
         
         # Compute and save speaker embedding
