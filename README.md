@@ -207,3 +207,12 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 - Backend powered by [FastAPI](https://fastapi.tiangolo.com/).
 - Leverages the [Transformers library](https://huggingface.co/transformers/) by Hugging Face and [SpeechBrain](https://speechbrain.github.io/).
 - Inspired by the iconic and resonant voice of Morgan Freeman.
+
+## Authors
+ 
+ - Tech Lead - [Yevgeniy Kim](https://github.com/musicaleugene)
+ - Software Developer - [Brynn Williams](https://github.com/bgbranfl)
+ - Software Developer - Jake Land
+ - Software Developer - [Thomas Hughes](https://github.com/7itanium)
+ - Scrum Master/Tester - Tabarek Ibrahim
+ - Information Security Officer - DeJuan Leffall
