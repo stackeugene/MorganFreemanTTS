@@ -13,8 +13,7 @@ This project implements a Text-to-Speech (TTS) system that generates audio in th
 *   **Dataset**: Uses a custom dataset of Morgan Freeman audio clips for fine-tuning.
 
 ## Project Structure
-Use code with caution.
-Markdown
+```text
 MorganFreemanTTS/
 ├── SoundFiles/
 │ ├── metadata_train.json # Training dataset metadata
@@ -32,7 +31,7 @@ MorganFreemanTTS/
 ├── backend.py # FastAPI application script for the backend server
 ├── avg_speaker_embedding.pt # Pre-computed speaker embedding file for Morgan Freeman's voice
 └── README.md # This file
-*(Self-correction: Ensured the structure uses standard box-drawing characters within the code block as they are generally well-supported there, and added slightly more descriptive comments.)*
+
 
 ## Prerequisites
 
