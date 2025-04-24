@@ -47,10 +47,9 @@ MorganFreemanTTS/
 
 1. **Clone the Repository:**
    ```bash
-   git clone <repository-url>
+   git clone <https://github.com/stackeugene/MorganFreemanTTS>
    cd MorganFreemanTTS
    ```
-   *(Replace `<repository-url>` with the actual URL of your repository)*
 
 2. **Create a Virtual Environment:**
    ```bash
