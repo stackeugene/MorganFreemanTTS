@@ -165,21 +165,20 @@
     <script>
         async function generateSpeech() {
             const text = document.getElementById('speech').value;
-            if (!text) {
-                alert('Please enter some text first!');
-                return;
-            }
-
             const loading = document.getElementById('loading');
             const audioControls = document.getElementById('audioControls');
             const audioPlayer = document.getElementById('audioPlayer');
+
+            if (!text) {
+                alert('Please enter some text!');
+                return;
+            }
 
             loading.style.display = 'block';
             audioControls.style.display = 'none';
 
             try {
-                // Replace this URL with your actual TTS API endpoint
-                const response = await fetch('YOUR_TTS_API_ENDPOINT', {
+                const response = await fetch('http://localhost:8000/generate_speech/', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -188,17 +187,18 @@
                 });
 
                 if (!response.ok) {
-                    throw new Error('Failed to generate speech');
+                    throw new Error(`Failed to generate speech: ${response.statusText}`);
                 }
 
                 const audioBlob = await response.blob();
                 const audioUrl = URL.createObjectURL(audioBlob);
                 
                 audioPlayer.src = audioUrl;
+                audioPlayer.style.display = 'block';
                 audioControls.style.display = 'block';
+                loading.style.display = 'none';
             } catch (error) {
-                alert('Error generating speech: ' + error.message);
-            } finally {
+                alert(`Error generating speech: ${error.message}`);
                 loading.style.display = 'none';
             }
         }
