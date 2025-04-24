@@ -16,19 +16,24 @@ This project implements a Text-to-Speech (TTS) system that generates audio in th
 Use code with caution.
 Markdown
 MorganFreemanTTS/
-├── SoundFiles/ # Audio files and metadata
+├── SoundFiles/
 │ ├── metadata_train.json # Training dataset metadata
 │ ├── metadata_eval.json # Validation dataset metadata
-│ └── Morgan Freeman_*.wav # Audio clips
-├── frontend/ # Web frontend files
-│ ├── index.html # Main web interface
-│ ├── Freeman.png # Morgan Freeman image
-│ └── serve.py # Optional Python script to serve frontend
-├── speecht5_finetuned/ # Fine-tuned SpeechT5 model
-├── morgan13.py # Core TTS script (training and generation)
-├── backend.py # FastAPI backend server
-├── avg_speaker_embedding.pt # Speaker embedding for Morgan Freeman
+│ └── Morgan Freeman_*.wav # Audio clips (Pattern representing multiple files)
+│
+├── frontend/
+│ ├── index.html # Main web interface HTML
+│ ├── Freeman.png # Image used in the frontend
+│ └── serve.py # Simple Python HTTP server for frontend (optional)
+│
+├── speecht5_finetuned/ # Directory containing the fine-tuned SpeechT5 model files
+│
+├── morgan13.py # Core Python script for TTS training and generation logic
+├── backend.py # FastAPI application script for the backend server
+├── avg_speaker_embedding.pt # Pre-computed speaker embedding file for Morgan Freeman's voice
 └── README.md # This file
+*(Self-correction: Ensured the structure uses standard box-drawing characters within the code block as they are generally well-supported there, and added slightly more descriptive comments.)*
+
 ## Prerequisites
 
 ### Software
@@ -173,15 +178,4 @@ Utilizes the HiFi-GAN vocoder for high-fidelity audio synthesis.
 Backend powered by FastAPI.
 Leverages the Transformers library by Hugging Face and potentially SpeechBrain.
 Inspired by the iconic and resonant voice of Morgan Freeman.
-
-## Authors
-
-- Tech Lead - [Yevgeniy Kim](https://github.com/musicaleugene)
-- Software Developer - [Brynn Williams](https://github.com/bgbranfl)
-- Software Developer - Jake Land
-- Software Developer - [Thomas Hughes](https://github.com/7itanium)
-- Scrum Master/Tester - Tabarek Ibrahim
-- Information Security Officer - DeJuan Leffall
-
-
-
+This version uses the standard box-drawing characters within a Markdown code block, which should render correctly as a visual tree in most modern Markdown viewers (like those on GitHub, GitLab, etc.).
